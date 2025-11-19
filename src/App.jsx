@@ -12,7 +12,8 @@ const extractEnvValue = (rawText, key) => {
 }
 function ItemManager() {
   const [items, setItems] = useState([])
-  const [searchTerm, setSearchTerm] = useState('')
+  const [searchName, setSearchName] = useState('')
+  const [searchDescription, setSearchDescription] = useState('')
   const [showAddForm, setShowAddForm] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
@@ -228,11 +229,17 @@ function ItemManager() {
   }
 
   const filteredItems = items.filter((item) => {
-    const searchUpper = searchTerm.toUpperCase()
-    const nameMatch = item.name.toUpperCase().includes(searchUpper)
-    const descMatch = item.descriptions.some((desc) => desc.toUpperCase().includes(searchUpper))
-    return nameMatch || descMatch
+    const nameQuery = searchName.trim().toUpperCase()
+    const descQuery = searchDescription.trim().toUpperCase()
+
+    const nameMatch = nameQuery ? item.name.toUpperCase().includes(nameQuery) : true
+    const descMatch = descQuery
+      ? item.descriptions.some((desc) => desc.toUpperCase().includes(descQuery))
+      : true
+
+    return nameMatch && descMatch
   })
+  const isFiltering = Boolean(searchName.trim() || searchDescription.trim())
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 to-blue-50 p-6">
@@ -253,15 +260,27 @@ function ItemManager() {
 
         <div className="bg-white rounded-lg shadow-md p-6 mb-6">
           <div className="flex flex-col gap-4 md:flex-row">
-            <div className="flex-1 relative">
-              <Search className="absolute left-3 top-3 text-gray-400" size={20} />
-              <input
-                type="text"
-                placeholder="Tìm kiếm theo tên hoặc mô tả..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-              />
+            <div className="flex-1 flex flex-col gap-4 md:flex-row">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-3 text-gray-400" size={20} />
+                <input
+                  type="text"
+                  placeholder="Tìm kiếm theo tên..."
+                  value={searchName}
+                  onChange={(e) => setSearchName(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                />
+              </div>
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-3 text-gray-400" size={20} />
+                <input
+                  type="text"
+                  placeholder="Tìm kiếm theo mô tả..."
+                  value={searchDescription}
+                  onChange={(e) => setSearchDescription(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                />
+              </div>
             </div>
             <button
               onClick={() => setShowAddForm(true)}
@@ -324,7 +343,7 @@ function ItemManager() {
 
         {filteredItems.length === 0 && (
           <div className="text-center py-12 text-gray-500">
-            {searchTerm ? 'Không tìm thấy kết quả nào' : 'Chưa có item nào. Hãy thêm mới!'}
+            {isFiltering ? 'Không tìm thấy kết quả nào' : 'Chưa có item nào. Hãy thêm mới!'}
           </div>
         )}
 
