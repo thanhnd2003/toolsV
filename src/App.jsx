@@ -189,7 +189,7 @@ function ItemManager() {
   }
 
   const handleDelete = () => {
-    if (password !== '1234') {
+    if (password !== '11102001') {
       setError('Mật khẩu sai!')
       return
     }
