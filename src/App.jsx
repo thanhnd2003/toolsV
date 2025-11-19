@@ -1,6 +1,15 @@
 import { useEffect, useState } from 'react'
-import { Search, Plus, Trash2, Edit2, X } from 'lucide-react'
+import { Search, Plus, Trash2, Edit2, X, RefreshCw } from 'lucide-react'
 
+const JSONBIN_ID = '691d7274d0ea881f40f1a480'
+const JSONBIN_BASE_URL = `https://api.jsonbin.io/v3/b/${JSONBIN_ID}`
+
+const extractEnvValue = (rawText, key) => {
+  if (typeof rawText !== 'string' || !rawText.trim()) return ''
+  const regex = new RegExp(`^\\s*${key}\\s*=\\s*(.+)$`, 'm')
+  const match = rawText.match(regex)
+  return match?.[1]?.trim() || ''
+}
 function ItemManager() {
   const [items, setItems] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
@@ -11,33 +20,95 @@ function ItemManager() {
   const [editTarget, setEditTarget] = useState(null)
   const [password, setPassword] = useState('')
   const [newItem, setNewItem] = useState({ name: '', image: '', description: '' })
-  const [editForm, setEditForm] = useState({ name: '', image: '', description: '' })
+  const [editForm, setEditForm] = useState({ name: '', image: '', description: '', existingDescriptions: [] })
   const [error, setError] = useState('')
   const [imageError, setImageError] = useState('')
+  const [isUploadingImage, setIsUploadingImage] = useState(false)
+  const [isSyncing, setIsSyncing] = useState(false)
+  const [syncError, setSyncError] = useState('')
+  const [jsonBinKey, setJsonBinKey] = useState(import.meta?.env?.VITE_JSONBIN_KEY || '')
 
   useEffect(() => {
-    const loadData = async () => {
-      try {
-        const result = await window.storage.get('items-data')
-        if (result && result.value) {
-          setItems(JSON.parse(result.value))
+    const init = async () => {
+      if (!jsonBinKey) {
+        try {
+          const response = await fetch('/bin.env', { cache: 'no-store' })
+          if (response.ok) {
+            const text = await response.text()
+            const extracted = extractEnvValue(text, 'VITE_JSONBIN_KEY')
+            if (extracted) {
+              setJsonBinKey(extracted)
+            }
+          }
+        } catch (err) {
+          console.error('Không thể đọc bin.env:', err)
         }
-      } catch (err) {
-        console.log('No existing data')
       }
+      loadFromJsonBin()
     }
-    loadData()
-  }, [])
+    init()
+  }, [jsonBinKey])
 
-  const saveData = async (data) => {
+  const loadFromJsonBin = async () => {
+    setIsSyncing(true)
     try {
-      await window.storage.set('items-data', JSON.stringify(data))
+      const response = await fetch(`${JSONBIN_BASE_URL}/latest`, {
+        headers: {
+          ...(jsonBinKey ? { 'X-Master-Key': jsonBinKey } : {}),
+          'X-Bin-Meta': 'false',
+        },
+      })
+      if (response.status === 404) {
+        // bin chưa có dữ liệu, giữ danh sách rỗng
+        setItems([])
+        setSyncError('')
+        return
+      }
+      if (!response.ok) {
+        throw new Error(`JSONBin load failed: ${response.status}`)
+      }
+      const remoteData = await response.json()
+      const remoteItems = Array.isArray(remoteData?.items) ? remoteData.items : remoteData?.record?.items
+      if (Array.isArray(remoteItems)) {
+        setItems(remoteItems)
+      }
+      setSyncError('')
     } catch (err) {
-      console.error('Save error:', err)
+      console.error('JSONBin fetch error:', err)
+      setSyncError('Không thể tải dữ liệu từ JSONBin. Vui lòng kiểm tra kết nối hoặc khóa truy cập.')
+    } finally {
+      setIsSyncing(false)
     }
   }
 
-  const handleImageUpload = (event, setter) => {
+  const syncToJsonBin = async (dataToSync) => {
+    if (!jsonBinKey) {
+      setSyncError('Chưa cấu hình JSONBin key (VITE_JSONBIN_KEY hoặc bin.env). Không thể đồng bộ.')
+      return
+    }
+    setIsSyncing(true)
+    try {
+      const response = await fetch(JSONBIN_BASE_URL, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(jsonBinKey ? { 'X-Master-Key': jsonBinKey } : {}),
+        },
+        body: JSON.stringify({ items: dataToSync.map((item) => ({ ...item })) }),
+      })
+      if (!response.ok) {
+        throw new Error(`JSONBin save failed: ${response.status}`)
+      }
+      setSyncError('')
+    } catch (err) {
+      console.error('JSONBin sync error:', err)
+      setSyncError('Không thể đồng bộ với JSONBin. Vui lòng thử lại.')
+    } finally {
+      setIsSyncing(false)
+    }
+  }
+
+  const handleImageUpload = async (event, setter) => {
     const file = event.target.files?.[0]
     if (!file) {
       return
@@ -46,16 +117,34 @@ function ItemManager() {
       setImageError('Ảnh phải nhỏ hơn 5MB')
       return
     }
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const result = e.target?.result
-      if (typeof result === 'string') {
-        setter(result)
-        setImageError('')
+    setIsUploadingImage(true)
+    setImageError('')
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('upload_preset', 'my_tools')
+
+      const response = await fetch('https://api.cloudinary.com/v1_1/dkuxrphfh/image/upload', {
+        method: 'POST',
+        body: formData,
+      })
+
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.error?.message || 'Upload thất bại')
       }
+
+      if (typeof data.secure_url === 'string') {
+        setter(data.secure_url)
+      } else {
+        throw new Error('Cloudinary không trả về URL hợp lệ')
+      }
+    } catch (err) {
+      console.error('Cloudinary upload error:', err)
+      setImageError('Không thể tải ảnh lên Cloudinary, vui lòng thử lại')
+    } finally {
+      setIsUploadingImage(false)
     }
-    reader.onerror = () => setImageError('Không thể đọc file ảnh')
-    reader.readAsDataURL(file)
   }
 
   const handleAdd = () => {
@@ -87,7 +176,12 @@ function ItemManager() {
     }
 
     setItems(updatedItems)
-    saveData(updatedItems)
+    syncToJsonBin(
+      updatedItems.map((item) => ({
+        ...item,
+        descriptions: item.descriptions,
+      }))
+    )
     setNewItem({ name: '', image: '', description: '' })
     setImageError('')
     setShowAddForm(false)
@@ -102,7 +196,7 @@ function ItemManager() {
 
     const updatedItems = items.filter((item) => item.id !== deleteTarget)
     setItems(updatedItems)
-    saveData(updatedItems)
+    syncToJsonBin(updatedItems)
     setShowDeleteModal(false)
     setDeleteTarget(null)
     setPassword('')
@@ -126,10 +220,10 @@ function ItemManager() {
     })
 
     setItems(updatedItems)
-    saveData(updatedItems)
+    syncToJsonBin(updatedItems)
     setShowEditModal(false)
     setEditTarget(null)
-    setEditForm({ name: '', image: '', description: '' })
+    setEditForm({ name: '', image: '', description: '', existingDescriptions: [] })
     setImageError('')
   }
 
@@ -146,6 +240,15 @@ function ItemManager() {
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-gray-800 mb-2">📦 Quản lý Items</h1>
           <p className="text-gray-600">Hệ thống quản lý thông minh với tính năng gộp mô tả</p>
+          <div className="flex flex-col items-center gap-2 mt-4">
+            {isSyncing && (
+              <div className="flex items-center gap-2 text-blue-600 text-sm">
+                <RefreshCw size={16} className="animate-spin" />
+                <span>Đang đồng bộ với JSONBin...</span>
+              </div>
+            )}
+            {syncError && <div className="text-red-500 text-sm">{syncError}</div>}
+          </div>
         </div>
 
         <div className="bg-white rounded-lg shadow-md p-6 mb-6">
@@ -190,6 +293,12 @@ function ItemManager() {
                   <button
                     onClick={() => {
                       setEditTarget(item.id)
+                      setEditForm({
+                        name: item.name,
+                        image: item.image || '',
+                        description: '',
+                        existingDescriptions: item.descriptions,
+                      })
                       setShowEditModal(true)
                     }}
                     className="flex-1 bg-blue-500 text-white py-2 rounded hover:bg-blue-600 flex items-center justify-center gap-2"
@@ -235,6 +344,7 @@ function ItemManager() {
                 </button>
               </div>
               {error && <div className="bg-red-100 text-red-700 p-3 rounded mb-4">{error}</div>}
+              {isUploadingImage && <div className="bg-blue-50 text-blue-700 p-3 rounded mb-4">Đang tải ảnh lên Cloudinary...</div>}
               {imageError && <div className="bg-yellow-100 text-yellow-800 p-3 rounded mb-4">{imageError}</div>}
               <div className="space-y-4">
                 <input
@@ -307,7 +417,7 @@ function ItemManager() {
                 <button
                   onClick={() => {
                     setShowEditModal(false)
-                    setEditForm({ name: '', image: '', description: '' })
+                    setEditForm({ name: '', image: '', description: '', existingDescriptions: [] })
                     setImageError('')
                   }}
                 >
@@ -315,6 +425,29 @@ function ItemManager() {
                 </button>
               </div>
               <p className="text-sm text-gray-600 mb-4">Chỉ điền vào field muốn cập nhật</p>
+              {(editForm.image || editForm.name) && (
+                <div className="mb-4 border rounded p-3 bg-gray-50">
+                  {editForm.image && (
+                    <div className="mb-3">
+                      <p className="text-xs text-gray-500 mb-1">Ảnh hiện tại</p>
+                      <img src={editForm.image} alt={editForm.name} className="w-full h-40 object-cover rounded" />
+                    </div>
+                  )}
+                  {Array.isArray(editForm.existingDescriptions) && editForm.existingDescriptions.length > 0 && (
+                    <div>
+                      <p className="text-xs text-gray-500 mb-1">Các mô tả hiện có</p>
+                      <div className="max-h-32 overflow-y-auto space-y-1">
+                        {editForm.existingDescriptions.map((desc, idx) => (
+                          <p key={idx} className="text-xs text-gray-600 bg-white border rounded px-2 py-1">
+                            • {desc}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              {isUploadingImage && <div className="bg-blue-50 text-blue-700 p-3 rounded mb-4">Đang tải ảnh lên Cloudinary...</div>}
               {imageError && <div className="bg-yellow-100 text-yellow-800 p-3 rounded mb-4">{imageError}</div>}
               <div className="space-y-4">
                 <input
