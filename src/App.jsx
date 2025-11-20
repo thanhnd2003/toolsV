@@ -7,7 +7,7 @@ const JSONBIN_BASE_URL = `https://api.jsonbin.io/v3/b/${JSONBIN_ID}`
 // Google Auth config
 const GOOGLE_CLIENT_ID =
   '252253664487-rpl21v12inf0msdr5b1o8kqrt846ut2u.apps.googleusercontent.com'
-const ADMIN_EMAIL = 'thanhdcnb6@gmail.com'
+const ADMIN_EMAILS = new Set(['thanhdcnb6@gmail.com', 'xuanvan.duong2001@gmail.com'])
 
 const extractEnvValue = (rawText, key) => {
   if (typeof rawText !== 'string' || !rawText.trim()) return ''
@@ -57,7 +57,7 @@ function ItemManager() {
   const [googleReady, setGoogleReady] = useState(false)
   const googleButtonRef = useRef(null)
 
-  const isAdmin = user?.email === ADMIN_EMAIL
+  const isAdmin = user?.email ? ADMIN_EMAILS.has(user.email) : false
 
   // Google Auth: load script + init
   useEffect(() => {
