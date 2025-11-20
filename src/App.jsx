@@ -1,8 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Search, Plus, Trash2, Edit2, X, RefreshCw } from 'lucide-react'
 
 const JSONBIN_ID = '691d7274d0ea881f40f1a480'
 const JSONBIN_BASE_URL = `https://api.jsonbin.io/v3/b/${JSONBIN_ID}`
+
+// Google Auth config
+const GOOGLE_CLIENT_ID =
+  '252253664487-rpl21v12inf0msdr5b1o8kqrt846ut2u.apps.googleusercontent.com'
+const ADMIN_EMAIL = 'thanhdcnb6@gmail.com'
 
 const extractEnvValue = (rawText, key) => {
   if (typeof rawText !== 'string' || !rawText.trim()) return ''
@@ -10,6 +15,20 @@ const extractEnvValue = (rawText, key) => {
   const match = rawText.match(regex)
   return match?.[1]?.trim() || ''
 }
+
+// Giải mã JWT trả về từ Google để lấy email, tên, avatar
+const decodeJwt = (token) => {
+  try {
+    const payload = token.split('.')[1]
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const decoded = atob(base64)
+    return JSON.parse(decoded)
+  } catch (err) {
+    console.error('Không thể decode JWT từ Google:', err)
+    return null
+  }
+}
+
 function ItemManager() {
   const [items, setItems] = useState([])
   const [searchName, setSearchName] = useState('')
@@ -33,6 +52,92 @@ function ItemManager() {
   const [isSyncing, setIsSyncing] = useState(false)
   const [syncError, setSyncError] = useState('')
   const [jsonBinKey, setJsonBinKey] = useState(import.meta?.env?.VITE_JSONBIN_KEY || '')
+  const [previewImage, setPreviewImage] = useState(null)
+  const [user, setUser] = useState(null)
+  const [googleReady, setGoogleReady] = useState(false)
+  const googleButtonRef = useRef(null)
+
+  const isAdmin = user?.email === ADMIN_EMAIL
+
+  // Google Auth: load script + init
+  useEffect(() => {
+    // Khôi phục user từ localStorage
+    const stored = localStorage.getItem('tools_user')
+    if (stored) {
+      try {
+        setUser(JSON.parse(stored))
+      } catch {
+        localStorage.removeItem('tools_user')
+      }
+    }
+
+    const handleCredentialResponse = (response) => {
+      const data = decodeJwt(response.credential)
+      if (!data?.email) {
+        setError('Đăng nhập Google thất bại. Vui lòng thử lại.')
+        return
+      }
+      const newUser = {
+        email: data.email,
+        name: data.name || data.email,
+        picture: data.picture || '',
+      }
+      setUser(newUser)
+      localStorage.setItem('tools_user', JSON.stringify(newUser))
+      setError('')
+    }
+
+    const initGoogle = () => {
+      if (!window.google?.accounts?.id) return
+      setGoogleReady(true)
+      window.google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: handleCredentialResponse,
+        auto_select: false,
+        cancel_on_tap_outside: true,
+      })
+    }
+
+    // Tự động load script Google nếu chưa có
+    if (!document.querySelector('script[data-google-identity]')) {
+      const script = document.createElement('script')
+      script.src = 'https://accounts.google.com/gsi/client'
+      script.async = true
+      script.defer = true
+      script.dataset.googleIdentity = 'true'
+      script.onload = initGoogle
+      document.body.appendChild(script)
+    } else {
+      initGoogle()
+    }
+  }, [])
+
+  // Render lại nút Google mỗi khi user đăng xuất & script đã sẵn sàng
+  useEffect(() => {
+    if (!googleReady || user || !window.google?.accounts?.id) return
+    if (!googleButtonRef.current) return
+    googleButtonRef.current.innerHTML = ''
+    window.google.accounts.id.renderButton(googleButtonRef.current, {
+      theme: 'filled_blue',
+      size: 'large',
+      shape: 'pill',
+      text: 'signin_with',
+      width: 280,
+      logo_alignment: 'left',
+    })
+    window.google.accounts.id.prompt()
+  }, [googleReady, user])
+
+  const handleLogout = () => {
+    if (user?.email && window.google?.accounts?.id?.revoke) {
+      window.google.accounts.id.revoke(user.email, () => {
+        // eslint-disable-next-line no-console
+        console.log('Revoked Google session for', user.email)
+      })
+    }
+    setUser(null)
+    localStorage.removeItem('tools_user')
+  }
 
   useEffect(() => {
     const init = async () => {
@@ -154,6 +259,10 @@ function ItemManager() {
   }
 
   const handleAdd = () => {
+    if (!isAdmin) {
+      setError('Bạn không có quyền thêm Item.')
+      return
+    }
     if (!newItem.name.trim() || !newItem.description.trim()) {
       setError('Tên và mô tả không được để trống!')
       return
@@ -195,6 +304,10 @@ function ItemManager() {
   }
 
   const handleDelete = () => {
+    if (!isAdmin) {
+      setError('Bạn không có quyền xóa Item.')
+      return
+    }
     if (password !== '11102001') {
       setError('Mật khẩu sai!')
       return
@@ -211,6 +324,10 @@ function ItemManager() {
   }
 
   const handleUpdate = () => {
+    if (!isAdmin) {
+      setError('Bạn không có quyền cập nhật Item.')
+      return
+    }
     const updatedItems = items.map((item) => {
       if (item.id === editTarget) {
         // Chuẩn hóa danh sách mô tả đã được chỉnh sửa trực tiếp
@@ -260,9 +377,11 @@ function ItemManager() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 to-blue-50 p-6">
       <div className="max-w-6xl mx-auto">
-        <div className="text-center mb-8">
+        <div className="text-center mb-4">
           <h1 className="text-4xl font-bold text-gray-800 mb-2">📦 Quản lý Items</h1>
-          <p className="text-gray-600">Hệ thống quản lý thông minh với tính năng gộp mô tả</p>
+          <p className="text-gray-600">
+            Hệ thống quản lý thông minh với tính năng gộp mô tả & phân quyền qua Google
+          </p>
           <div className="flex flex-col items-center gap-2 mt-4">
             {isSyncing && (
               <div className="flex items-center gap-2 text-blue-600 text-sm">
@@ -271,6 +390,44 @@ function ItemManager() {
               </div>
             )}
             {syncError && <div className="text-red-500 text-sm">{syncError}</div>}
+          </div>
+        </div>
+
+        <div className="flex justify-between items-center mb-6 flex-col gap-3 md:flex-row">
+          <div className="text-sm text-gray-600">
+            {user ? (
+              <span>
+                Đang đăng nhập: <span className="font-semibold">{user.name}</span>{' '}
+                <span className="text-xs text-gray-500">({user.email})</span>{' '}
+                <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">
+                  {isAdmin ? 'Quyền: Admin (thêm/sửa/xóa)' : 'Quyền: Xem dữ liệu'}
+                </span>
+              </span>
+            ) : (
+              <span>Hãy đăng nhập Google để sử dụng đầy đủ tính năng.</span>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            {user && user.picture && (
+              <img
+                src={user.picture}
+                alt={user.name}
+                className="w-8 h-8 rounded-full border object-cover"
+              />
+            )}
+            {user ? (
+              <button
+                onClick={handleLogout}
+                className="text-sm px-3 py-1 rounded border border-gray-300 hover:bg-gray-100"
+              >
+                Đăng xuất
+              </button>
+            ) : (
+              <div
+                ref={googleButtonRef}
+                className="rounded-full border border-purple-200 bg-white shadow-sm px-4 py-2 flex items-center justify-center"
+              />
+            )}
           </div>
         </div>
 
@@ -298,13 +455,15 @@ function ItemManager() {
                 />
               </div>
             </div>
-            <button
-              onClick={() => setShowAddForm(true)}
-              className="bg-purple-600 text-white px-6 py-2 rounded-lg hover:bg-purple-700 flex items-center gap-2 justify-center"
-            >
-              <Plus size={20} />
-              Thêm mới
-            </button>
+            {isAdmin && (
+              <button
+                onClick={() => setShowAddForm(true)}
+                className="bg-purple-600 text-white px-6 py-2 rounded-lg hover:bg-purple-700 flex items-center gap-2 justify-center"
+              >
+                <Plus size={20} />
+                Thêm mới
+              </button>
+            )}
           </div>
         </div>
 
@@ -314,7 +473,14 @@ function ItemManager() {
               key={item.id}
               className="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow"
             >
-              {item.image && <img src={item.image} alt={item.name} className="w-full h-48 object-cover" />}
+              {item.image && (
+                <img
+                  src={item.image}
+                  alt={item.name}
+                  className="w-full h-48 object-cover cursor-pointer"
+                  onClick={() => setPreviewImage(item.image)}
+                />
+              )}
               <div className="p-4">
                 <h3 className="text-xl font-bold text-gray-800 mb-2">{item.name.toUpperCase()}</h3>
                 <div className="space-y-2 mb-4">
@@ -324,34 +490,36 @@ function ItemManager() {
                     </p>
                   ))}
                 </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => {
-                      setEditTarget(item.id)
-                      setEditForm({
-                        name: item.name,
-                        image: item.image || '',
-                        description: '',
-                        existingDescriptions: item.descriptions,
-                      })
-                      setShowEditModal(true)
-                    }}
-                    className="flex-1 bg-blue-500 text-white py-2 rounded hover:bg-blue-600 flex items-center justify-center gap-2"
-                  >
-                    <Edit2 size={16} />
-                    Sửa
-                  </button>
-                  <button
-                    onClick={() => {
-                      setDeleteTarget(item.id)
-                      setShowDeleteModal(true)
-                    }}
-                    className="flex-1 bg-red-500 text-white py-2 rounded hover:bg-red-600 flex items-center justify-center gap-2"
-                  >
-                    <Trash2 size={16} />
-                    Xóa
-                  </button>
-                </div>
+                {isAdmin && (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        setEditTarget(item.id)
+                        setEditForm({
+                          name: item.name,
+                          image: item.image || '',
+                          description: '',
+                          existingDescriptions: item.descriptions,
+                        })
+                        setShowEditModal(true)
+                      }}
+                      className="flex-1 bg-blue-500 text-white py-2 rounded hover:bg-blue-600 flex items-center justify-center gap-2"
+                    >
+                      <Edit2 size={16} />
+                      Sửa
+                    </button>
+                    <button
+                      onClick={() => {
+                        setDeleteTarget(item.id)
+                        setShowDeleteModal(true)
+                      }}
+                      className="flex-1 bg-red-500 text-white py-2 rounded hover:bg-red-600 flex items-center justify-center gap-2"
+                    >
+                      <Trash2 size={16} />
+                      Xóa
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -359,7 +527,11 @@ function ItemManager() {
 
         {filteredItems.length === 0 && (
           <div className="text-center py-12 text-gray-500">
-            {isFiltering ? 'Không tìm thấy kết quả nào' : 'Chưa có item nào. Hãy thêm mới!'}
+            {isFiltering
+              ? 'Không tìm thấy kết quả nào'
+              : isAdmin
+              ? 'Chưa có item nào. Hãy thêm mới!'
+              : 'Không có item nào để hiển thị.'}
           </div>
         )}
 
@@ -464,8 +636,13 @@ function ItemManager() {
                 <div className="mb-4 border rounded p-3 bg-gray-50">
                   {editForm.image && (
                     <div className="mb-3">
-                      <p className="text-xs text-gray-500 mb-1">Ảnh hiện tại</p>
-                      <img src={editForm.image} alt={editForm.name} className="w-full h-40 object-cover rounded" />
+                      <p className="text-xs text-gray-500 mb-1">Ảnh hiện tại (bấm để xem lớn)</p>
+                      <img
+                        src={editForm.image}
+                        alt={editForm.name}
+                        className="w-full h-40 object-cover rounded cursor-pointer"
+                        onClick={() => setPreviewImage(editForm.image)}
+                      />
                     </div>
                   )}
                   {Array.isArray(editForm.existingDescriptions) && editForm.existingDescriptions.length > 0 && (
@@ -519,6 +696,30 @@ function ItemManager() {
                   Cập nhật
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+        {previewImage && (
+          <div
+            className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-[60]"
+            onClick={() => setPreviewImage(null)}
+          >
+            <div className="relative max-w-5xl max-h-[90vh]">
+              <button
+                className="absolute -top-3 -right-3 bg-white rounded-full p-1 shadow"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setPreviewImage(null)
+                }}
+              >
+                <X size={20} />
+              </button>
+              <img
+                src={previewImage}
+                alt="Xem ảnh lớn"
+                className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-lg bg-black"
+                onClick={(e) => e.stopPropagation()}
+              />
             </div>
           </div>
         )}
