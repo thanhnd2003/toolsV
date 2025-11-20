@@ -21,7 +21,12 @@ function ItemManager() {
   const [editTarget, setEditTarget] = useState(null)
   const [password, setPassword] = useState('')
   const [newItem, setNewItem] = useState({ name: '', image: '', description: '' })
-  const [editForm, setEditForm] = useState({ name: '', image: '', description: '', existingDescriptions: [] })
+  const [editForm, setEditForm] = useState({
+    name: '',
+    image: '',
+    description: '',
+    existingDescriptions: [],
+  })
   const [error, setError] = useState('')
   const [imageError, setImageError] = useState('')
   const [isUploadingImage, setIsUploadingImage] = useState(false)
@@ -208,13 +213,24 @@ function ItemManager() {
   const handleUpdate = () => {
     const updatedItems = items.map((item) => {
       if (item.id === editTarget) {
+        // Chuẩn hóa danh sách mô tả đã được chỉnh sửa trực tiếp
+        const editedDescriptions =
+          Array.isArray(editForm.existingDescriptions) && editForm.existingDescriptions.length > 0
+            ? editForm.existingDescriptions
+                .map((d) => d?.trim())
+                .filter((d) => d)
+            : item.descriptions
+
+        // Nếu người dùng nhập mô tả mới, sẽ thêm vào cuối danh sách
+        const finalDescriptions = editForm.description.trim()
+          ? [...editedDescriptions, editForm.description.trim()]
+          : editedDescriptions
+
         return {
           ...item,
           name: editForm.name.trim() || item.name,
           image: editForm.image.trim() || item.image,
-          descriptions: editForm.description.trim()
-            ? [...item.descriptions, editForm.description]
-            : item.descriptions,
+          descriptions: finalDescriptions,
         }
       }
       return item
@@ -454,12 +470,20 @@ function ItemManager() {
                   )}
                   {Array.isArray(editForm.existingDescriptions) && editForm.existingDescriptions.length > 0 && (
                     <div>
-                      <p className="text-xs text-gray-500 mb-1">Các mô tả hiện có</p>
+                      <p className="text-xs text-gray-500 mb-1">Các mô tả (có thể sửa trực tiếp)</p>
                       <div className="max-h-32 overflow-y-auto space-y-1">
                         {editForm.existingDescriptions.map((desc, idx) => (
-                          <p key={idx} className="text-xs text-gray-600 bg-white border rounded px-2 py-1">
-                            • {desc}
-                          </p>
+                          <input
+                            key={idx}
+                            type="text"
+                            value={desc}
+                            onChange={(e) => {
+                              const updated = [...editForm.existingDescriptions]
+                              updated[idx] = e.target.value
+                              setEditForm({ ...editForm, existingDescriptions: updated })
+                            }}
+                            className="w-full text-xs text-gray-700 bg-white border rounded px-2 py-1"
+                          />
                         ))}
                       </div>
                     </div>
